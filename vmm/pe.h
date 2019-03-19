@@ -2,14 +2,35 @@
 //        virtual address space. This may mostly (but not exclusively) be used
 //        by Windows functionality.
 //
-// (c) Ulf Frisk, 2018
+// (c) Ulf Frisk, 2018-2019
 // Author: Ulf Frisk, pcileech@frizk.net
 //
 #ifndef __PE_H__
 #define __PE_H__
 #include "vmm.h"
 
+#define CONTAINING_RECORD32(address, type, field) ((DWORD)( \
+                                                  (DWORD)(QWORD)(address) - \
+                                                  (DWORD)(QWORD)(&((type *)0)->field)))
+
 static const LPCSTR PE_DATA_DIRECTORIES[16] = { "EXPORT", "IMPORT", "RESOURCE", "EXCEPTION", "SECURITY", "BASERELOC", "DEBUG", "ARCHITECTURE", "GLOBALPTR", "TLS", "LOAD_CONFIG", "BOUND_IMPORT", "IAT", "DELAY_IMPORT", "COM_DESCRIPTOR", "RESERVED" };
+
+typedef struct tdPE_THUNKINFO_IAT {
+    BOOL fValid;
+    BOOL f32;               // if TRUE fn is a 32-bit/4-byte entry, otherwise 64-bit/8-byte entry.
+    ULONG64 vaThunk;        // address of import address table 'thunk'.
+    ULONG64 vaFunction;     // value if import address table 'thunk' == address of imported function.
+    ULONG64 vaNameModule;   // address of name string for imported module.
+    ULONG64 vaNameFunction; // address of name string for imported function.
+} PE_THUNKINFO_IAT, *PPE_THUNKINFO_IAT;
+
+typedef struct tdPE_THUNKINFO_EAT {
+    BOOL fValid;
+    DWORD valueThunk;       // value of export address table 'thunk'.
+    ULONG64 vaThunk;        // address of import address table 'thunk'.
+    ULONG64 vaNameFunction; // address of name string for exported function.
+    ULONG64 vaFunction;     // address of exported function (module base + value parameter).
+} PE_THUNKINFO_EAT, *PPE_THUNKINFO_EAT;
 
 /*
 * Retrieve the size of the module given its base.
@@ -29,21 +50,47 @@ QWORD PE_GetSize(_In_ PVMM_PROCESS pProcess, _In_opt_ QWORD vaModuleBase);
 QWORD PE_GetProcAddress(_In_ PVMM_PROCESS pProcess, _In_ QWORD vaModuleBase, _In_ LPSTR lpProcName);
 
 /*
+* Lookup the virtual address of an exported function or symbol in the module supplied
+* among with additional information returned in the pThunkInfoEAT struct.
+* -- pProcess
+* -- vaModuleBase = PE module base address.
+* -- szProcName
+* -- pThunkInfoEAT
+* -- return
+*/
+_Success_(return)
+BOOL PE_GetThunkInfoEAT(_In_ PVMM_PROCESS pProcess, _In_ QWORD vaModuleBase, _In_ LPSTR szProcName, _Out_ PPE_THUNKINFO_EAT pThunkInfoEAT);
+
+/*
+* Retrieve an import address table (IAT) entry for a specific function.
+* This may be useful for IAT patching functionality.
+* -- pProcess
+* -- vaModuleBase
+* -- szImportModuleName
+* -- szImportProcName
+* -- pThunkInfoIAT
+* -- return
+*/
+_Success_(return)
+BOOL PE_GetThunkInfoIAT(_In_ PVMM_PROCESS pProcess, _In_ QWORD vaModuleBase, _In_ LPSTR szImportModuleName, _In_ LPSTR szImportProcName, _Out_ PPE_THUNKINFO_IAT pThunkInfoIAT);
+
+/*
 * Retrieve the module name and optionally the module size.
 * -- pProcess
 * -- vaModuleBase
 * -- fOnFailDummyName
 * -- pbModuleHeaderOpt
 * -- szModuleName
+* -- cszModuleName
 * -- pdwSize
 * -- return
 */
 _Success_(return)
-BOOL PE_GetModuleNameEx(_In_ PVMM_PROCESS pProcess, _In_ QWORD vaModuleBase, _In_ BOOL fOnFailDummyName, _In_reads_opt_(0x1000) PBYTE pbModuleHeaderOpt, _Out_writes_(MAX_PATH) PCHAR szModuleName, _Out_opt_ PDWORD pdwSize);
+BOOL PE_GetModuleNameEx(_In_ PVMM_PROCESS pProcess, _In_ QWORD vaModuleBase, _In_ BOOL fOnFailDummyName, _In_reads_opt_(0x1000) PBYTE pbModuleHeaderOpt, _Out_writes_(cszModuleName) PCHAR szModuleName, _In_ DWORD cszModuleName, _Out_opt_ PDWORD pdwSize);
 _Success_(return)
-inline BOOL PE_GetModuleName(_In_ PVMM_PROCESS pProcess, _In_ QWORD vaModuleBase, _Out_writes_(MAX_PATH) PCHAR szModuleName)
+inline BOOL PE_GetModuleName(_In_ PVMM_PROCESS pProcess, _In_ QWORD vaModuleBase, _Out_writes_(cszModuleName) PCHAR szModuleName, _In_ DWORD cszModuleName)
 {
-    return PE_GetModuleNameEx(pProcess, vaModuleBase, FALSE, NULL, szModuleName, NULL);
+    return PE_GetModuleNameEx(pProcess, vaModuleBase, FALSE, NULL, szModuleName, cszModuleName, NULL);
 }
 
 /*

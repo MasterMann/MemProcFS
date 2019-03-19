@@ -155,9 +155,9 @@ NTSTATUS PY2C_Callback_Write(_In_ PVMMDLL_PLUGIN_CONTEXT ctx, _In_ LPVOID pb, _I
     PyObject *args, *pyLong = NULL, *pyPid;
     PyGILState_STATE gstate;
     CHAR szPathBuffer[MAX_PATH];
-    if(!ctxPY2C->fInitialized) { return FALSE; }
-    if(!PY2C_Util_TranslatePathDelimiter(szPathBuffer, ctx->szPath)) { return FALSE; }
     *pcbWrite = 0;
+    if(!ctxPY2C->fInitialized) { return VMMDLL_STATUS_FILE_INVALID; }
+    if(!PY2C_Util_TranslatePathDelimiter(szPathBuffer, ctx->szPath)) { return VMMDLL_STATUS_FILE_INVALID; }
     gstate = PyGILState_Ensure();
     // pyPid is "consumed" by Py_BuildValue and does not need to be Py_DECREF'ed.
     if(ctx->dwPID == (DWORD)-1) {
@@ -185,7 +185,7 @@ fail:
     return nt;
 }
 
-VOID PY2C_Callback_Notify(_Inout_opt_ PHANDLE phModulePrivate, _In_ DWORD fEvent, _In_opt_ PVOID pvEvent, _In_opt_ DWORD cbEvent)
+VOID PY2C_Callback_Notify(_In_ DWORD fEvent, _In_opt_ PVOID pvEvent, _In_opt_ DWORD cbEvent)
 {
     PyObject *args, *pyResult = NULL;
     PyGILState_STATE gstate;
@@ -279,7 +279,7 @@ VOID VmmPyPlugin_UpdateVerbosity()
 	}
 }
 
-#define PYTHON_PATH_MAX             4*MAX_PATH
+#define PYTHON_PATH_MAX             7*MAX_PATH
 #define PYTHON_PATH_DELIMITER       L";"
 BOOL VmmPyPlugin_PythonInitialize(_In_ HMODULE hDllPython)
 {
@@ -299,14 +299,26 @@ BOOL VmmPyPlugin_PythonInitialize(_In_ HMODULE hDllPython)
     wcscat_s(wszPathPython, PYTHON_PATH_MAX, PYTHON_PATH_DELIMITER);
     wcscat_s(wszPathPython, PYTHON_PATH_MAX, wszPathBasePython);
     wcscat_s(wszPathPython, PYTHON_PATH_MAX, L"python36.zip");
-    // 2.3:  python lib
+    // 2.3:  python dlls
+    wcscat_s(wszPathPython, PYTHON_PATH_MAX, PYTHON_PATH_DELIMITER);
+    wcscat_s(wszPathPython, PYTHON_PATH_MAX, wszPathBasePython);
+    wcscat_s(wszPathPython, PYTHON_PATH_MAX, L"DLLs\\");
+    // 2.4:  python lib
     wcscat_s(wszPathPython, PYTHON_PATH_MAX, PYTHON_PATH_DELIMITER);
     wcscat_s(wszPathPython, PYTHON_PATH_MAX, wszPathBasePython);
     wcscat_s(wszPathPython, PYTHON_PATH_MAX, L"Lib\\");
-    // 2.4: .exe location of this process
+    // 2.5:  python lib\site-packages (python pip)
+    wcscat_s(wszPathPython, PYTHON_PATH_MAX, PYTHON_PATH_DELIMITER);
+    wcscat_s(wszPathPython, PYTHON_PATH_MAX, wszPathBasePython);
+    wcscat_s(wszPathPython, PYTHON_PATH_MAX, L"Lib\\site-packages\\");
+    // 2.6: .exe location of this process
     wcscat_s(wszPathPython, PYTHON_PATH_MAX, PYTHON_PATH_DELIMITER);
     wcscat_s(wszPathPython, PYTHON_PATH_MAX, wszPathBaseExe);
-    // 3: Initialize Embedded Python.
+    // 2.7: pylib relative to this process
+    wcscat_s(wszPathPython, PYTHON_PATH_MAX, PYTHON_PATH_DELIMITER);
+    wcscat_s(wszPathPython, PYTHON_PATH_MAX, wszPathBaseExe);
+    wcscat_s(wszPathPython, PYTHON_PATH_MAX, L"pylib\\");
+    // 3: Initialize (Embedded) Python.
     Py_SetProgramName(L"VmmPyPluginManager");
     Py_SetPath(wszPathPython);
     if(ctxPY2C->fVerboseExtra) {
@@ -314,6 +326,7 @@ BOOL VmmPyPlugin_PythonInitialize(_In_ HMODULE hDllPython)
     }
     PY2C_InitializeModuleVMMPYCC();
     Py_Initialize();
+    PyEval_InitThreads();
     // 4: Import VmmPyPlugin library/file to start the python part of the plugin manager.
     pName = PyUnicode_DecodeFSDefault("vmmpyplugin");
     if(!pName) { goto fail; }
@@ -322,6 +335,7 @@ BOOL VmmPyPlugin_PythonInitialize(_In_ HMODULE hDllPython)
     // 5: Cleanups
     Py_DECREF(pName);
     Py_DECREF(pModule);
+    PyEval_ReleaseLock();
     return TRUE;
 fail:
     if(pName) { Py_DECREF(pName); }
@@ -330,7 +344,7 @@ fail:
     return FALSE;
 }
 
-VOID PYTHON_Close(_Inout_ PHANDLE phModulePrivate)
+VOID PYTHON_Close()
 {
     PY2C_Callback_Close();
     Py_FinalizeEx();
@@ -357,7 +371,7 @@ VOID InitializeVmmPlugin(_In_ PVMMDLL_PLUGIN_REGINFO pRegInfo)
         pRegInfo->reg_fn.pfnRead = PY2C_Callback_Read;          // Read function supported.
         pRegInfo->reg_fn.pfnWrite = PY2C_Callback_Write;        // Write function supported.
         pRegInfo->reg_fn.pfnNotify = PY2C_Callback_Notify;      // Notify function supported.
-        pRegInfo->reg_fn.pfnCloseHandleModule = PYTHON_Close;   // Close module handle.
+        pRegInfo->reg_fn.pfnClose = PYTHON_Close;               // Close module handle.
         pRegInfo->pfnPluginManager_Register(pRegInfo);          // Register with the plugin maanger.
     }
 }
